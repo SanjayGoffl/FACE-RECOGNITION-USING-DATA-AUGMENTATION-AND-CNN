@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+            Analytics Dashboard
+        </h2>
+        <div class="text-sm text-gray-400">
+            Hidden Mode
+        </div>
+    </div>
+
+    <!-- Stats Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Card 1 -->
+        <div class="glass p-6 rounded-xl border border-gray-700/50 relative overflow-hidden group">
+            <div
+                class="absolute -right-6 -top-6 w-24 h-24 bg-blue-500/10 rounded-full blur-xl group-hover:bg-blue-500/20 transition">
+            </div>
+            <h3 class="text-gray-400 text-sm font-medium mb-1">Total Enrolled Students</h3>
+            <div class="flex items-end gap-2">
+                <span class="text-4xl font-bold text-white" id="statTotalStudents">--</span>
+                <span class="text-green-400 text-sm mb-1"><i class="fas fa-arrow-up"></i> Active</span>
+            </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="glass p-6 rounded-xl border border-gray-700/50 relative overflow-hidden group">
+            <div
+                class="absolute -right-6 -top-6 w-24 h-24 bg-purple-500/10 rounded-full blur-xl group-hover:bg-purple-500/20 transition">
+            </div>
+            <h3 class="text-gray-400 text-sm font-medium mb-1">Present Today</h3>
+            <div class="flex items-end gap-2">
+                <span class="text-4xl font-bold text-white" id="statPresentToday">--</span>
+                <span class="text-gray-400 text-sm mb-1" id="attendanceRate">(--%)</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Area -->
+    <div class="glass p-6 rounded-xl border border-gray-700/50">
+        <h3 class="text-lg font-bold mb-6">Attendance Trends (Last 7 Days)</h3>
+        <div class="w-full h-[300px]">
+            <canvas id="attendanceChart"></canvas>
+        </div>
+    </div>
+
+    <!-- Student Roster (Preview) -->
+    <div class="glass p-6 rounded-xl border border-gray-700/50">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold">Enrolled Students</h3>
+            <a href="/students" class="text-sm text-accent hover:underline">Manage Students &rarr;</a>
+        </div>
+        <div class="overflow-y-auto max-h-[300px]">
+            <table class="w-full text-left">
+                <thead class="text-gray-400 border-b border-gray-700 text-sm">
+                    <tr>
+                        <th class="pb-2">Name</th>
+                        <th class="pb-2">Reg No</th>
+                        <th class="pb-2 text-right">Status</th>
+                    </tr>
+                </thead>
+                <tbody id="dashboardStudentTable" class="text-gray-300 text-sm">
+                    <tr>
+                        <td colspan="3" class="py-4 text-center">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    async function loadAnalytics() {
+        try {
+            const res = await fetch('/api/analytics');
+            const data = await res.json();
+
+            if (data.error) {
+                console.error(data.error);
+                return;
+            }
+
+            // Update Stats
+            document.getElementById('statTotalStudents').innerText = data.total_students;
+            document.getElementById('statPresentToday').innerText = data.total_attendance_today;
+
+            const rate = data.total_students > 0
+                ? ((data.total_attendance_today / data.total_students) * 100).toFixed(1)
+                : 0;
+            document.getElementById('attendanceRate').innerText = `(${rate}%)`;
+
+            // Prepare Chart Data
+            const labels = Object.keys(data.daily_trends);
+            const values = Object.values(data.daily_trends);
+
+            renderChart(labels, values);
+
+            // Load Student List for Dashboard
+            loadDashboardStudents();
+
+        } catch (err) {
+            console.error("Failed to load analytics:", err);
+        }
+    }
+
+    async function loadDashboardStudents() {
+        try {
+            const res = await fetch('/api/students');
+            const students = await res.json();
+            const tbody = document.getElementById('dashboardStudentTable');
+            tbody.innerHTML = '';
+
+            if (students.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="py-4 text-center text-gray-500">No students enrolled.</td></tr>';
+                return;
+            }
+
+            students.forEach(s => {
+                const row = `
+                <tr class="border-b border-gray-800 hover:bg-white/5 transition">
+                    <td class="py-3 font-medium flex items-center gap-2">
+                        <div class="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs font-bold">
+                            ${s.name.charAt(0)}
+                        </div>
+                        ${s.name}
+                    </td>
+                    <td class="py-3 text-gray-400 font-mono text-xs">${s.reg_no}</td>
+                    <td class="py-3 text-right">
+                         <span class="text-xs px-2 py-1 rounded bg-gray-700 text-gray-300">Enrolled</span>
+                    </td>
+                </tr>`;
+                tbody.innerHTML += row;
+            });
+
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    function renderChart(labels, data) {
+        const ctx = document.getElementById('attendanceChart').getContext('2d');
+
+        // Gradient Fill
+        const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+        gradient.addColorStop(0, 'rgba(139, 92, 246, 0.5)'); // purple-500
+        gradient.addColorStop(1, 'rgba(139, 92, 246, 0.0)');
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Students Present',
+                    data: data,
+                    borderColor: '#8b5cf6', // purple-500
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    pointBackgroundColor: '#fff',
+                    pointBorderColor: '#8b5cf6',
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#cdf',
+                        padding: 10,
+                        cornerRadius: 8,
+                        displayColors: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.05)'
+                        },
+                        ticks: {
+                            color: '#9ca3af',
+                            stepSize: 1
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#9ca3af'
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    loadAnalytics();
+</script>
+{% endblock %}

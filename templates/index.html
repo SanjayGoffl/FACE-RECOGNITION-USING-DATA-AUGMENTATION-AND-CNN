@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+    <!-- Actions -->
+    <div class="space-y-4">
+        <h2 class="text-2xl font-bold mb-4">Quick Actions</h2>
+
+        <a href="/enroll" class="block p-6 glass rounded-xl hover:border-accent transition-colors group">
+            <div class="flex items-center gap-4">
+                <div
+                    class="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                    <i class="fas fa-user-plus text-xl"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-lg">Enroll New Student</h3>
+                    <p class="text-gray-400">Register face data with burst capture</p>
+                </div>
+            </div>
+        </a>
+
+        <a href="/attendance" class="block p-6 glass rounded-xl hover:border-accent transition-colors group">
+            <div class="flex items-center gap-4">
+                <div
+                    class="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 group-hover:scale-110 transition-transform">
+                    <i class="fas fa-camera text-xl"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-lg">Live Attendance</h3>
+                    <p class="text-gray-400">Scan faces in real-time</p>
+                </div>
+            </div>
+        </a>
+
+        <div class="p-6 glass rounded-xl">
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="font-bold text-lg">System Status</h3>
+                <button onclick="trainModel()" class="text-xs px-2 py-1 bg-gray-700 rounded hover:bg-gray-600">Full
+                    Retrain</button>
+            </div>
+            <div class="text-sm text-gray-400">
+                <p>Status: <span class="text-green-400">Online</span></p>
+                <p>Database: <span class="text-orange-400">Firebase Firestore</span></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Logs -->
+    <div class="glass p-6 rounded-xl">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold">Recent Logs</h2>
+            <button onclick="refreshLogs()" class="text-accent hover:underline text-sm"><i class="fas fa-sync"></i>
+                Refresh</button>
+        </div>
+        <div class="overflow-y-auto max-h-[400px]">
+            <table class="w-full text-left text-sm">
+                <thead class="text-gray-500 border-b border-gray-700">
+                    <tr>
+                        <th class="pb-2">Time</th>
+                        <th class="pb-2">Name</th>
+                        <th class="pb-2">ID</th>
+                        <th class="pb-2">Conf</th>
+                    </tr>
+                </thead>
+                <tbody id="logsTable" class="text-gray-300">
+                    <tr>
+                        <td colspan="4" class="py-4 text-center">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    async function refreshLogs() {
+        try {
+            const res = await fetch('/api/logs');
+            const logs = await res.json();
+            const tbody = document.getElementById('logsTable');
+            tbody.innerHTML = '';
+
+            if (logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="py-4 text-center">No logs found</td></tr>';
+                return;
+            }
+
+            logs.forEach(log => {
+                const date = new Date(log.timestamp);
+                const timeStr = date.toLocaleTimeString();
+                const row = `
+                <tr class="border-b border-gray-800 hover:bg-white/5">
+                    <td class="py-2">${timeStr}</td>
+                    <td class="py-2 font-medium">${log.name}</td>
+                    <td class="py-2 text-gray-400">${log.reg_no}</td>
+                    <td class="py-2 text-xs">${(log.confidence * 100).toFixed(1)}%</td>
+                </tr>
+            `;
+                tbody.innerHTML += row;
+            });
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    async function trainModel() {
+        if (!confirm("Retrain model from scratch? This might take a while.")) return;
+        try {
+            const res = await fetch('/api/train', { method: 'POST' });
+            const data = await res.json();
+            alert(data.message || data.error);
+        } catch (e) {
+            alert("Error starting training");
+        }
+    }
+
+    // Initial load
+    refreshLogs();
+</script>
+{% endblock %}

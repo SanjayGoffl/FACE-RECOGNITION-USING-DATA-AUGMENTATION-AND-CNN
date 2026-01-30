@@ -1,14 +1,12 @@
-.ven
-venv/
-.venv/
 __pycache__/
 *.pyc
 *.pyo
+venv/
+env/
 .env
-.DS_Store
-data/students/
-
-# Ignore data files
-reference/embedding.json
-
-
+serviceAccountKey.json
+*.log
+data/
+logs/
+.vscode/
+deprecated/

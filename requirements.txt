@@ -1,15 +1,11 @@
-# Core
-# Pin to NumPy 1.x because TensorFlow/macOS wheels and keras-facenet currently
-# link against 1.x; NumPy 2.x breaks those binaries on import.
+opencv-python-headless
 numpy
-opencv-python
-Pillow
-
-# TensorFlow (use tensorflow-macos on Apple Silicon; see README)
-# 2.15.x remains compatible with NumPy 1.26.x and works on Python 3.10/3.11.
-# On Intel macOS use `tensorflow==2.15.0`; on Apple Silicon prefer
-# `tensorflow-macos==2.15.0` and optionally `tensorflow-metal` for acceleration.
-tensorflow
-keras-facenet
 mtcnn
-scipy
+keras-facenet
+tensorflow-cpu
+pillow
+flask
+firebase-admin
+python-dotenv
+flask-cors
+gunicorn

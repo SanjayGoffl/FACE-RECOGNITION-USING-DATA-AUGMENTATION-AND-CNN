@@ -1,0 +1,14 @@
+Dockerfile
+README.md
+*.pyc
+*.pyo
+__pycache__
+.git
+.gitignore
+.env
+venv
+env
+data/students/images/
+logs/
+run.bat
+server.py

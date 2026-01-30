@@ -8,6 +8,7 @@ import json
 import os
 import glob
 import csv
+import shutil
 from datetime import datetime
 import cv2
 import numpy as np
@@ -16,9 +17,21 @@ from mtcnn import MTCNN
 from keras_facenet import FaceNet
 
 
+import sys
+# Ensure src is in path if running directly
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    import firebase_db
+except ImportError:
+    try:
+        from src import firebase_db
+    except ImportError:
+        print("⚠️ Could not import firebase_db. Ensure it is in the same directory or src package.")
+        firebase_db = None
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 EMBEDDINGS_FILE = os.path.join(BASE_DIR, "reference", "embeddings.json")
-STUDENTS_CSV = os.path.join(BASE_DIR, "data", "students", "info", "students.csv")
 STUDENTS_DIR = os.path.join(BASE_DIR, "data", "students", "images")
 LOGS_DIR = os.path.join(BASE_DIR, "logs", "attendance.csv")
 
@@ -133,17 +146,30 @@ class AttendanceLogger:
         os.makedirs(os.path.dirname(self.csv_path), exist_ok=True)
         self._marked = False
     
-    def mark_once(self, name: str, roll_no: str):
+    def mark_once(self, name: str, roll_no: str, confidence: float = 1.0):
         """Mark attendance once per session."""
         if self._marked:
             return False
+        
+        # Log to Firebase
+        if firebase_db:
+            try:
+                firebase_db.log_attendance(roll_no, name, confidence, method="web-ui")
+            except Exception as e:
+                print(f"⚠️ Firebase logging failed: {e}")
+
+        # Keep local CSV backup
         now = datetime.now().isoformat(timespec='seconds')
         exists = os.path.exists(self.csv_path)
-        with open(self.csv_path, 'a', newline='') as f:
-            writer = csv.writer(f)
-            if not exists:
-                writer.writerow(['name', 'roll_no', 'timestamp'])
-            writer.writerow([name, roll_no, now])
+        try:
+            with open(self.csv_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not exists:
+                    writer.writerow(['name', 'roll_no', 'timestamp', 'confidence'])
+                writer.writerow([name, roll_no, now, confidence])
+        except Exception as e:
+            print(f"⚠️ CSV logging failed: {e}")
+            
         self._marked = True
         return True
 
@@ -157,6 +183,41 @@ class AttendancePipeline:
         self.detector = FaceDetector()
         self.embedder = FaceEmbedder()
         self.logger = AttendanceLogger(LOGS_DIR)
+        
+        # Sync from cloud on init
+        self.sync_from_cloud()
+
+    def sync_from_cloud(self):
+        """Download embeddings.json from Firebase Storage."""
+        if not firebase_db: return
+        
+        try:
+            bucket = firebase_db.storage.bucket()
+            blob = bucket.blob("embeddings.json")
+            if blob.exists():
+                print("☁️ Syncing embeddings from Cloud Storage...")
+                os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
+                blob.download_to_filename(EMBEDDINGS_FILE)
+                print("✅ Embeddings synced.")
+            else:
+                print("☁️ No embeddings found in cloud (Fresh Start).")
+        except Exception as e:
+            print(f"⚠️ Cloud sync failed: {e}")
+
+    def sync_to_cloud(self):
+        """Upload embeddings.json to Firebase Storage."""
+        if not firebase_db: return
+        
+        try:
+            if not os.path.exists(EMBEDDINGS_FILE):
+                return
+                
+            bucket = firebase_db.storage.bucket()
+            blob = bucket.blob("embeddings.json")
+            blob.upload_from_filename(EMBEDDINGS_FILE)
+            print("☁️ ✅ Embeddings uploaded to Cloud Storage.")
+        except Exception as e:
+            print(f"⚠️ Cloud upload failed: {e}")
     
     def detect_and_embed(self, image):
         """Detect face in image and generate embedding.
@@ -199,12 +260,23 @@ class AttendancePipeline:
         return (emb / (norm + 1e-8)).tolist()
     
     def _get_all_students_from_csv(self):
-        """Read all students from CSV."""
-        if not os.path.exists(STUDENTS_CSV):
+        """Get all students from Firebase (fallback to CSV if fail)."""
+        if firebase_db:
+            try:
+                print("🔄 Fetching students from Firebase...")
+                return firebase_db.get_all_students_dict()
+            except Exception as e:
+                print(f"⚠️ Firebase fetch failed: {e}")
+        
+        # Fallback to local CSV? Or just empty. 
+        # For now, let's assuming we rely on Firebase. 
+        # But if students.csv exists, we can use it.
+        csv_path = os.path.join(BASE_DIR, "data", "students", "info", "students.csv")
+        if not os.path.exists(csv_path):
             return {}
         
         students = {}
-        with open(STUDENTS_CSV, 'r') as f:
+        with open(csv_path, 'r') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 roll = row['roll_number'].strip()
@@ -260,7 +332,48 @@ class AttendancePipeline:
             "name": name,
             "embedding": mean_emb
         }
-    
+
+    def delete_student(self, roll_no, delete_data=True):
+        """Delete student from embeddings model and optionally delete data.
+
+        Args:
+            roll_no: Student roll number
+            delete_data: If True, delete the image folder in data/students/images
+
+        Returns:
+            bool: True if deleted (or not found but processed), False on error
+        """
+        # 1. Update Embeddings
+        embeddings = self.load_embeddings()
+        if roll_no in embeddings:
+            del embeddings[roll_no]
+            # Save back
+            try:
+                os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
+                with open(EMBEDDINGS_FILE, "w") as f:
+                    json.dump(embeddings, f)
+                print(f"🗑️ Removed {roll_no} from embeddings model.")
+            except Exception as e:
+                print(f"⚠️ Failed to save embeddings during deletion: {e}")
+                return False
+        else:
+            print(f"⚠️ {roll_no} not found in embeddings (safe to ignore if not trained yet).")
+
+        # 2. Delete Data Folder
+        if delete_data:
+            student_dir = os.path.join(STUDENTS_DIR, roll_no)
+            if os.path.exists(student_dir):
+                try:
+                    shutil.rmtree(student_dir)
+                    print(f"🗑️ Deleted data folder: {student_dir}")
+                except Exception as e:
+                    print(f"⚠️ Failed to delete data folder: {e}")
+                    return False
+            else:
+                print(f"⚠️ specific data folder {student_dir} not found.")
+
+        return True
+
     def add_students_incremental(self, specific_roll_nos=None):
         """Add new students incrementally WITHOUT retraining existing ones.
         
@@ -286,6 +399,15 @@ class AttendancePipeline:
             students_to_add = {roll: all_students[roll] for roll in specific_roll_nos if roll in all_students}
         else:
             # Process only NEW students (not in existing embeddings)
+            # For cloud functionality, we assume training happens LOCALLY usually, or we need to download images.
+            # But "Free Tier Deployment" usually means INFERENCE only.
+            # If we want to TRAIN on cloud, we need to download images from storage?
+            # Complexity: High. 
+            # Simplified approach: We assume images are present locally (or uploaded via API). 
+            # If this is Cloud Run, images from API are saved to "STUDENTS_DIR" which is ephemeral.
+            # So we process them, update embeddings, push embeddings to cloud. The images are lost on restart, but that's fine as long as we have the embedding.
+            # We strictly don't need to keep images for inference.
+            
             students_to_add = {roll: name for roll, name in all_students.items() 
                              if roll not in existing_embeddings}
         
@@ -307,6 +429,9 @@ class AttendancePipeline:
         os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
         with open(EMBEDDINGS_FILE, "w") as f:
             json.dump(existing_embeddings, f)
+            
+        # Push to cloud
+        self.sync_to_cloud()
         
         print(f"\n✅ Added {added_count} new student(s)")
         print(f"   Total students: {len(existing_embeddings)}\n")
@@ -408,6 +533,58 @@ class AttendancePipeline:
         cv2.destroyAllWindows()
 
 
+    def recognize_frame(self, frame, threshold=0.6):
+        """Recognize face in a single frame (for Web UI)."""
+        embeddings = self.load_embeddings()
+        if not embeddings:
+            return {"status": "error", "message": "No embeddings found"}
+            
+        emb, box = self.detect_and_embed(frame)
+        if emb is None:
+            return {"status": "no_face"}
+            
+        # Find best match
+        best_sim = 0
+        best_roll = None
+        best_name = None
+        
+        for roll_no, data in embeddings.items():
+            ref_emb = data['embedding']
+            sim = self.compare_embeddings(emb, ref_emb)
+            if sim > best_sim:
+                best_sim = sim
+                best_roll = roll_no
+                best_name = data['name']
+        
+        result = {
+            "status": "success",
+            "box": box,
+            "confidence": float(best_sim)
+        }
+        
+        if best_sim >= threshold:
+            result.update({
+                "match": True,
+                "name": best_name,
+                "roll_no": best_roll
+            })
+            # Log it (async or sync)
+            # Create a new logger instance for stateless requests? 
+            # Or use self.logger, but self.logger has state `_marked`.
+            # For web API, we want logging.
+            # But we might want to debounce logic.
+            # For now, log every hit.
+            if firebase_db:
+                firebase_db.log_attendance(best_roll, best_name, best_sim, method="web-ui")
+                
+        else:
+            result.update({
+                "match": False,
+                "name": "Unknown"
+            })
+            
+        return result
+
 # Convenience functions for main.py
 pipeline = AttendancePipeline()
 
@@ -433,4 +610,8 @@ def add_student(roll_no=None):
 def recognize(threshold=0.6):
     """Run recognition."""
     pipeline.recognize_live(threshold)
+
+def delete_student(roll_no, delete_data=True):
+    """Delete a student by roll no."""
+    pipeline.delete_student(roll_no, delete_data)
 

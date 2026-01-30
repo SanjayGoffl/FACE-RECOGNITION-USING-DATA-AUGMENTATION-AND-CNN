@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold">Enrolled Students</h2>
+        <a href="/enroll" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-white font-bold">
+            <i class="fas fa-plus mr-2"></i> New Student
+        </a>
+    </div>
+
+    <!-- Students List -->
+    <div class="glass p-6 rounded-xl overflow-hidden">
+        <table class="w-full text-left">
+            <thead class="text-gray-400 border-b border-gray-700">
+                <tr>
+                    <th class="pb-3 pl-2">Name</th>
+                    <th class="pb-3">Register No</th>
+                    <th class="pb-3">Added On</th>
+                    <th class="pb-3 text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody id="studentTable" class="text-gray-200">
+                <tr>
+                    <td colspan="4" class="py-4 text-center text-gray-500">Loading...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    async function loadStudents() {
+        try {
+            const res = await fetch('/api/students');
+            const students = await res.json();
+            const tbody = document.getElementById('studentTable');
+            tbody.innerHTML = '';
+
+            if (students.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="py-10 text-center text-gray-500">No students found.</td></tr>';
+                return;
+            }
+
+            students.forEach(s => {
+                // Encode name/reg for URL safely
+                const safeName = encodeURIComponent(s.name);
+                const safeReg = encodeURIComponent(s.reg_no);
+
+                // Format Date (Firebase Timestamp handling often returns weird formats, so simple check)
+                let dateStr = "N/A";
+                if (s.created_at) {
+                    // If timestamp comes as object or ISO 
+                    dateStr = new Date(s.created_at).toLocaleDateString();
+                    if (dateStr === "Invalid Date") dateStr = "Recently";
+                }
+
+                const row = `
+                <tr class="border-b border-gray-800 hover:bg-white/5 transition">
+                    <td class="py-4 pl-2 font-medium flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold text-xs">
+                            ${s.name.charAt(0).toUpperCase()}
+                        </div>
+                        ${s.name}
+                    </td>
+                    <td class="py-4 font-mono text-sm text-gray-400">${s.reg_no}</td>
+                    <td class="py-4 text-sm text-gray-500">${dateStr}</td>
+                    <td class="py-4 text-right">
+                        <a href="/enroll?name=${safeName}&reg_no=${safeReg}&mode=append" 
+                           class="text-accent hover:text-white bg-accent/10 hover:bg-accent/20 px-3 py-1 rounded text-sm transition border border-accent/20">
+                           <i class="fas fa-camera mr-1"></i> Add Photos
+                        </a>
+                        <button onclick="deleteStudent('${s.reg_no}', '${safeName}')" 
+                           class="ml-2 text-red-500 hover:text-red-400 bg-red-500/10 hover:bg-red-500/20 px-3 py-1 rounded text-sm transition border border-red-500/20">
+                           <i class="fas fa-trash-alt mr-1"></i> Delete
+                        </button>
+                    </td>
+                </tr>
+            `;
+                tbody.innerHTML += row;
+            });
+        } catch (err) {
+            document.getElementById('studentTable').innerHTML = `<tr><td colspan="4" class="text-red-500 py-4 text-center">Error: ${err.message}</td></tr>`;
+        }
+    }
+
+    loadStudents();
+
+    async function deleteStudent(regNo, name) {
+        if (!confirm(`Are you sure you want to delete ${decodeURIComponent(name)} (${regNo})?\nThis will remove their profile, photos, and training data.`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/students/${regNo}`, { method: 'DELETE' });
+            const data = await res.json();
+
+            if (res.ok) {
+                alert(data.message || 'Student deleted successfully');
+                loadStudents(); // Reload the list
+            } else {
+                alert(`Error: ${data.error || 'Failed to delete student'}`);
+            }
+        } catch (err) {
+            alert(`Error: ${err.message}`);
+        }
+    }
+</script>
+{% endblock %}
