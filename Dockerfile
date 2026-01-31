@@ -1,4 +1,4 @@
-# Use official Python image (Full version, not slim) to avoid missing library errors
+# Use official Python image
 FROM python:3.9
 
 # Allow statements and log messages to immediately appear in the Knative/Railway logs
@@ -8,9 +8,12 @@ ENV PYTHONUNBUFFERED True
 ENV APP_HOME /app
 WORKDIR $APP_HOME
 
+# Install system dependencies (Fix for cv2 libGL error)
+RUN apt-get update && apt-get install -y libgl1 && rm -rf /var/lib/apt/lists/*
+
 # Install production dependencies
 COPY requirements.txt ./
-# timeout increased for heavy tensorflow install
+# Increase timeout for slow builds
 RUN pip install --no-cache-dir -r requirements.txt --timeout 1000
 
 # Copy local code to the container image
