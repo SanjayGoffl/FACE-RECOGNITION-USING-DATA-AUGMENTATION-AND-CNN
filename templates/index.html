@@ -85,9 +85,27 @@
                 return;
             }
 
+            // Filter: Show only ONE log per person per minute
+            const uniqueLogs = [];
+            const seen = new Set();
+
             logs.forEach(log => {
                 const date = new Date(log.timestamp);
-                const timeStr = date.toLocaleTimeString();
+                // Create a unique key: Name + Date + Hour + Minute
+                // e.g. "Sanjay G_2024-01-31_11_31"
+                const key = `${log.name}_${date.getFullYear()}-${date.getMonth()}-${date.getDate()}_${date.getHours()}:${date.getMinutes()}`;
+
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    uniqueLogs.push(log);
+                }
+            });
+
+            uniqueLogs.forEach(log => {
+                const date = new Date(log.timestamp);
+                // Format: 11:31 AM
+                const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
                 const row = `
                 <tr class="border-b border-gray-800 hover:bg-white/5">
                     <td class="py-2">${timeStr}</td>
