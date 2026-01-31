@@ -114,59 +114,38 @@
             // Draw Results
             ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-            // Handle Mirroring for Overlay
-            ctx.save();
-            if (currentFacingMode === 'user') {
-                ctx.translate(overlay.width, 0);
-                ctx.scale(-1, 1);
-            }
+            // Ensure canvas is NOT mirrored via CSS
+            overlay.style.transform = "none";
 
             if (result.status === 'success' && result.box) {
-                const [x, y, w, h] = result.box;
-                const color = result.match ? '#22c55e' : '#ef4444'; // Green or Red
+                let [x, y, w, h] = result.box;
+
+                // Manual visual flip for User Facing Mode
+                if (currentFacingMode === 'user') {
+                    x = overlay.width - x - w;
+                }
+
+                const color = result.match ? '#22c55e' : '#ef4444';
 
                 // Draw Box
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 4;
                 ctx.strokeRect(x, y, w, h);
 
-                // Labels need to be un-mirrored if we mirrored the context?
-                // Actually, if we mirror the context, text will be backwards.
-                // Better approach: Calculate un-mirrored coordinates relative to canvas width.
-                // But CSS transform mirrors the visual Video.
-                // The overlay canvas is atop it. 
-                // If we mirror the overlay canvas via CSS too, everything matches!
-
-            }
-            ctx.restore();
-
-            // SIMPLER APPROACH: Mirror overlay canvas via CSS to match Video
-            overlay.style.transform = (currentFacingMode === 'user') ? "scaleX(-1)" : "none";
-
-            if (result.status === 'success' && result.box) {
-                const [x, y, w, h] = result.box;
-                const color = result.match ? '#22c55e' : '#ef4444';
-
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x, y, w, h);
-
-                // If we mirror canvas via CSS, text is backwards.
-                // We must draw text normally but flip the canvas? No.
-                // Correct way: Mirror context, draw box, then un-mirror for text? 
-                // Or just draw text assuming user can read backwards? (Selfie cam behaviors vary).
-                // Best: Draw text, but if CSS mirrored, text is wrong.
-                // Let's rely on standard <style> transform on parent container?
-                // No, video and canvas are siblings.
-
-                // OK, let's keep it simple: Draw box. Text might be mirrored in selfie mode.
-                // Most users accept this in "Live Preview".
-
+                // Draw Label Background
                 ctx.fillStyle = color;
-                ctx.fillRect(x, y - 30, w, 30);
+                const labelY = y - 30 < 0 ? y + h : y - 30;
+                ctx.fillRect(x, labelY, w, 30);
+
+                // Draw Text
                 ctx.fillStyle = 'black';
                 ctx.font = 'bold 16px sans-serif';
-                ctx.fillText(`${result.name} (${(result.confidence * 100).toFixed(0)}%)`, x + 5, y - 8);
+                const text = `${result.name} (${(result.confidence * 100).toFixed(0)}%)`;
+                const textMetrics = ctx.measureText(text);
+                const textX = x + (w - textMetrics.width) / 2;
+                const textY = labelY + 20;
+
+                ctx.fillText(text, textX, textY);
             }
 
         } catch (err) {
