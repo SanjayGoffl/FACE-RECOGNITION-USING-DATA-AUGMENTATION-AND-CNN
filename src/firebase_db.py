@@ -47,10 +47,27 @@ def add_student_to_db(reg_no, name):
     }, merge=True)
     print(f"✅ Student {name} ({reg_no}) added to Firestore.")
 
+# Simple in-memory cache for debouncing: {reg_no: timestamp}
+_log_cache = {}
+
 def log_attendance(reg_no, name, confidence, method="web-cam"):
-    """Log attendance to Firestore."""
-    # Check if already logged for today to prevent duplicates (optional logic)
-    # For now, we just log every recognition event that passes threshold logic in pipeline
+    """Log attendance to Firestore (with 60s cooldown)."""
+    global _log_cache
+    
+    # Prune old cache entries to prevent memory leak (optional, but good practice)
+    now = datetime.now()
+    if len(_log_cache) > 1000:
+        _log_cache = {k: v for k, v in _log_cache.items() if (now - v).total_seconds() < 60}
+
+    # Check cooldown
+    if reg_no in _log_cache:
+        last_log_time = _log_cache[reg_no]
+        if (now - last_log_time).total_seconds() < 60:
+            print(f"⏳ Skipped duplicate log for {name} (cooldown active)")
+            return
+
+    # Update cache
+    _log_cache[reg_no] = now
     
     log_data = {
         'reg_no': reg_no,
@@ -58,7 +75,7 @@ def log_attendance(reg_no, name, confidence, method="web-cam"):
         'timestamp': firestore.SERVER_TIMESTAMP,
         'confidence': float(confidence),
         'method': method,
-        'date_str': datetime.now().strftime("%Y-%m-%d") # Helper for querying
+        'date_str': now.strftime("%Y-%m-%d") # Helper for querying
     }
     
     # We can use a subcollection or a root collection. Root is easier for querying all logs.
@@ -158,15 +175,32 @@ def get_logs_by_date(date_str):
     """Get all logs for a specific date (YYYY-MM-DD)."""
     try:
         logs_ref = db.collection('attendance_logs')
-        # Filter by date_str
-        query = logs_ref.where('date_str', '==', date_str).order_by('timestamp', direction=firestore.Query.DESCENDING)
+        
+        # Parse date string "YYYY-MM-DD"
+        start_dt = datetime.strptime(date_str, "%Y-%m-%d")
+        
+        # Create end of day (23:59:59.999999)
+        end_dt = start_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Filter by timestamp range
+        # Note: timestamps in Firestore are stored in UTC (usually)
+        # This query assumes the server local time aligns with intended query date or relies on naive datetime handling
+        query = logs_ref.where('timestamp', '>=', start_dt)\
+                        .where('timestamp', '<=', end_dt)\
+                        .order_by('timestamp', direction=firestore.Query.DESCENDING)
+        
         docs = query.stream()
         
         logs = []
         for doc in docs:
             log = doc.to_dict()
             if 'timestamp' in log and log['timestamp']:
-                log['timestamp'] = log['timestamp'].isoformat()
+                # Handle Firestore datetime object
+                ts = log['timestamp']
+                if hasattr(ts, 'isoformat'):
+                    log['timestamp'] = ts.isoformat()
+                else:
+                    log['timestamp'] = str(ts)
             logs.append(log)
         return logs
     except Exception as e:

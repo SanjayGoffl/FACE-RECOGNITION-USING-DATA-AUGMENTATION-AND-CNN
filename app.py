@@ -81,6 +81,8 @@ def api_enroll():
     # Trigger incremental training
     try:
         pipeline_add_student(reg_no)
+        # OPTIMIZATION: Clear memory after enrollment (heavy ML op)
+        pipeline.cleanup() 
     except Exception as e:
         return jsonify({"display_error": f"Training Error: {str(e)}"}), 500
         
@@ -90,6 +92,8 @@ def api_enroll():
 def api_train():
     try:
         pipeline_train(incremental=False)
+        # OPTIMIZATION: Clear memory after full training
+        pipeline.cleanup()
         return jsonify({"success": True, "message": "Full training complete."})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -178,6 +182,8 @@ def api_delete_student(reg_no):
         
         # 2. Delete from Local Data & Embeddings
         pipeline.delete_student(reg_no, delete_data=True)
+        # OPTIMIZATION: Clear memory after deletion
+        pipeline.cleanup()
         
         return jsonify({"success": True, "message": f"Student {reg_no} deleted successfully."})
     except Exception as e:

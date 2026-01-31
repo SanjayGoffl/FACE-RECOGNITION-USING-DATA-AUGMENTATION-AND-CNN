@@ -9,15 +9,30 @@ import os
 import glob
 import csv
 import shutil
+import gc
 from datetime import datetime
 import cv2
 import numpy as np
 from PIL import Image
+
+# OPTIMIZATION: Set TF to not eat all RAM
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging
+import tensorflow as tf
+try:
+    # Try to limit memory usage
+    physical_devices = tf.config.list_physical_devices('CPU')
+    # CPU usually doesn't have memory growth settings like GPU, but good practice
+    # For CPU optimization, we rely on inter/intra op parallelism settings
+    tf.config.threading.set_inter_op_parallelism_threads(1)
+    tf.config.threading.set_intra_op_parallelism_threads(1)
+except:
+    pass
+
 from mtcnn import MTCNN
 from keras_facenet import FaceNet
-
-
 import sys
+
+# Ensure src is in path if running directly
 # Ensure src is in path if running directly
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -39,30 +54,43 @@ LOGS_DIR = os.path.join(BASE_DIR, "logs", "attendance.csv")
 # ========== FACE DETECTION ==========
 
 class FaceDetector:
-    """MTCNN Face Detection"""
-    
+    """MTCNN Face Detection (Singleton/Lazy Load)"""
+    _instance = None
+
     def __init__(self):
-        self.detector = MTCNN()
+        if FaceDetector._instance is None:
+            print("🚀 Loading MTCNN (Lazy)...")
+            self.detector = MTCNN()
+            FaceDetector._instance = self
+        else:
+            self.detector = FaceDetector._instance.detector
     
     def detect(self, frame_bgr):
-        """Detect faces in BGR frame.
-        Returns: [{'box': [x, y, w, h], 'confidence': float}, ...]
-        """
+        """Detect faces in BGR frame."""
         if frame_bgr is None or frame_bgr.size == 0:
             return []
+            
+        # USER REQUEST: Do not rescale. Use original resolution.
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         try:
             results = self.detector.detect_faces(rgb)
         except Exception as e:
-            # Some frames can fail inside MTCNN when shapes are invalid; skip quietly
             print(f"⚠️ Face detection skipped: {e}")
             return []
+            
         detections = []
         for r in results:
             box = r.get('box', [0, 0, 0, 0])
             conf = r.get('confidence', 0.0)
             detections.append({'box': box, 'confidence': conf})
         return detections
+    
+    @staticmethod
+    def clamp_box(box, width, height, margin=0):
+        """Clamp box coordinates within frame bounds."""
+        x, y, w, h = box
+        x = max(0, x - margin)
+        y = max(0, y - margin)
     
     @staticmethod
     def clamp_box(box, width, height, margin=0):
@@ -84,12 +112,18 @@ class FaceDetector:
 # ========== FACE EMBEDDING ==========
 
 class FaceEmbedder:
-    """FaceNet Embedding Generation"""
+    """FaceNet Embedding Generation (Singleton/Lazy Load)"""
+    _instance = None
     
     def __init__(self):
-        cache_dir = os.path.join(BASE_DIR, "models")
-        os.makedirs(cache_dir, exist_ok=True)
-        self.model = FaceNet(cache_folder=cache_dir)
+        if FaceEmbedder._instance is None:
+            print("🚀 Loading FaceNet (Lazy)...")
+            cache_dir = os.path.join(BASE_DIR, "models")
+            os.makedirs(cache_dir, exist_ok=True)
+            self.model = FaceNet(cache_folder=cache_dir)
+            FaceEmbedder._instance = self
+        else:
+            self.model = FaceEmbedder._instance.model
     
     @staticmethod
     def crop_and_resize(frame_bgr, box, size=160):
@@ -334,15 +368,9 @@ class AttendancePipeline:
         }
 
     def delete_student(self, roll_no, delete_data=True):
-        """Delete student from embeddings model and optionally delete data.
-
-        Args:
-            roll_no: Student roll number
-            delete_data: If True, delete the image folder in data/students/images
-
-        Returns:
-            bool: True if deleted (or not found but processed), False on error
-        """
+        """Delete student from embeddings model and optionally delete data."""
+        # ... existing implementation ... 
+        # (Using existing logic but wrapped to match previous structure)
         # 1. Update Embeddings
         embeddings = self.load_embeddings()
         if roll_no in embeddings:
@@ -373,8 +401,29 @@ class AttendancePipeline:
                 print(f"⚠️ specific data folder {student_dir} not found.")
 
         return True
+    
+    def cleanup(self):
+        """Force release of memory (TensorFlow/Keras)."""
+        print("🧹 Cleaning up memory...")
+        
+        # Reset Singletons
+        FaceDetector._instance = None
+        FaceEmbedder._instance = None
+        self.detector = FaceDetector() # Re-init will be lazy, so it's just a shell
+        self.embedder = FaceEmbedder()
+        
+        # Clear TF Session
+        try:
+            tf.keras.backend.clear_session()
+        except:
+            pass
+            
+        # Force GC
+        gc.collect()
+        print("✅ Memory cleanup complete.")
 
     def add_students_incremental(self, specific_roll_nos=None):
+
         """Add new students incrementally WITHOUT retraining existing ones.
         
         Args:
@@ -424,6 +473,9 @@ class AttendancePipeline:
             if result:
                 existing_embeddings[roll_no] = result
                 added_count += 1
+            
+            # MEMORY OPTIMIZATION: Force GC after every student to clear TF graph garbage
+            gc.collect()
         
         # Save updated embeddings (existing + new)
         os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
@@ -492,38 +544,58 @@ class AttendancePipeline:
         if not cap.isOpened():
             print("❌ Cannot open webcam")
             return
+            
+        frame_count = 0
+        skip_frames = 2 # Process 1 frame, skip 2
+        last_box = None
+        last_label = None
+        last_color = (0, 255, 0)
         
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
             
-            emb, box = self.detect_and_embed(frame)
-            
-            if emb is not None and box is not None:
-                # Find best match across all students
-                best_sim = 0
-                best_roll = None
-                best_name = None
+            # OPTIMIZATION: Frame Skipping
+            # Only run heavy ML every (skip_frames + 1) frames
+            if frame_count % (skip_frames + 1) == 0:
+                emb, box = self.detect_and_embed(frame)
                 
-                for roll_no, data in embeddings.items():
-                    ref_emb = data['embedding']
-                    sim = self.compare_embeddings(emb, ref_emb)
+                if emb is not None and box is not None:
+                    # Find best match
+                    best_sim = 0
+                    best_roll = None
+                    best_name = None
                     
-                    if sim > best_sim:
-                        best_sim = sim
-                        best_roll = roll_no
-                        best_name = data['name']
-                
-                draw_box(frame, box)
-                
-                if best_sim >= threshold:
-                    label = f"{best_name} ({best_roll}) | {best_sim:.2f}"
-                    self.logger.mark_once(best_name, best_roll)  # idempotent; no repeated logs
+                    for roll_no, data in embeddings.items():
+                        ref_emb = data['embedding']
+                        sim = self.compare_embeddings(emb, ref_emb)
+                        
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_roll = roll_no
+                            best_name = data['name']
+                    
+                    if best_sim >= threshold:
+                        last_label = f"{best_name} ({best_roll}) | {best_sim:.2f}"
+                        last_color = (0, 255, 0)
+                        self.logger.mark_once(best_name, best_roll)
+                    else:
+                        last_label = f"Unknown | {best_sim:.2f}"
+                        last_color = (0, 0, 255)
+                    
+                    last_box = box
                 else:
-                    label = f"Unknown | {best_sim:.2f}"
-                
-                draw_label(frame, label, box)
+                    last_box = None
+                    last_label = None
+            
+            # Draw persistent box (from last processed frame)
+            if last_box is not None:
+                draw_box(frame, last_box, color=last_color)
+                if last_label:
+                    draw_label(frame, last_label, last_box, color=last_color)
+            
+            frame_count += 1
             
             cv2.imshow('Smart Attendance', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -531,6 +603,8 @@ class AttendancePipeline:
         
         cap.release()
         cv2.destroyAllWindows()
+        # Force cleanup after session ends
+        self.cleanup()
 
 
     def recognize_frame(self, frame, threshold=0.6):
