@@ -14,6 +14,10 @@
                 class="bg-accent/20 hover:bg-accent/30 text-accent px-3 py-1 rounded text-sm transition font-bold">
                 View
             </button>
+            <button onclick="exportToCSV()"
+                class="bg-green-600/20 hover:bg-green-600/30 text-green-400 px-3 py-1 rounded text-sm transition font-bold border border-green-600/30 ml-2">
+                <i class="fas fa-file-csv mr-1"></i> Export CSV
+            </button>
         </div>
     </div>
 
@@ -88,5 +92,41 @@
 
     // Auto load today
     loadHistory();
+
+    function exportToCSV() {
+        const dateVal = document.getElementById('historyDate').value;
+        const rows = document.querySelectorAll('#historyTable tr');
+
+        if (rows.length <= 1 && rows[0].innerText.includes('No attendance')) {
+            alert("No data to export!");
+            return;
+        }
+
+        let csvContent = "data:text/csv;charset=utf-8,";
+        csvContent += "Time,Name,Reg No,Method,Confidence\n"; // Header
+
+        rows.forEach(row => {
+            const cols = row.querySelectorAll('td');
+            if (cols.length > 1) { // Skip loading/empty message rows
+                const rowData = [];
+                // Extract clean text from columns
+                rowData.push(cols[0].innerText.trim()); // Time
+                rowData.push(cols[1].innerText.trim()); // Name
+                rowData.push(cols[2].innerText.trim()); // Reg No
+                rowData.push(cols[3].innerText.trim()); // Method
+                rowData.push(cols[4].innerText.trim().replace('%', '')); // Confidence
+
+                csvContent += rowData.join(",") + "\n";
+            }
+        });
+
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `attendance_${dateVal}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
 </script>
 {% endblock %}
