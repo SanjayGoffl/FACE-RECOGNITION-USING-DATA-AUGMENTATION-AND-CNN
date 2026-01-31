@@ -9,3 +9,4 @@ firebase-admin
 python-dotenv
 flask-cors
 gunicorn
+scipy
