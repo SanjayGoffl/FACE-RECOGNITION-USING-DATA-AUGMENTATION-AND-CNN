@@ -73,6 +73,27 @@ The system requires a Firebase Service Account key to communicate with the datab
 
 ---
 
+## 📱 Mobile & Network Access
+
+If you access the system from a mobile phone via your Wi-Fi IP (e.g., `http://192.168.1.10:5000`):
+
+> [!WARNING]
+> **HTTPS is Required**: Modern mobile browsers (Chrome, Safari) block the camera on `http` links for security.
+
+### How to Fix:
+1.  **Option A (Fastest)**: Use **ngrok** to create a secure tunnel.
+    ```powershell
+    ngrok http 5000
+    ```
+    Use the `https://...` link provided by ngrok on your mobile.
+2.  **Option B (Android/Chrome only)**:
+    - Open Chrome on your phone.
+    - Go to `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
+    - Enter your PC's IP and port (e.g., `http://192.168.1.10:5000`).
+    - Enable it and restart Chrome.
+
+---
+
 ## 🚀 How to Run
 
 ### Option 1: Web Management (Recommended)

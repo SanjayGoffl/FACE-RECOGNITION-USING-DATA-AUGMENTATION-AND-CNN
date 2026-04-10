@@ -109,7 +109,12 @@
             stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
             document.getElementById('video').srcObject = stream;
         } catch (err) {
-            alert("Camera access denied: " + err.message);
+            console.error(err);
+            let msg = "Camera Access Denied: " + err.message;
+            if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                msg += "\n\n⚠️ MOBILE USERS: Browsers ONLY allow camera access over HTTPS. Go to Chrome settings to allow insecure origins or use an HTTPS tunnel.";
+            }
+            alert(msg);
         }
     }
 

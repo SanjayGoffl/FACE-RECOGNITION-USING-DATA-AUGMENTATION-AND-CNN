@@ -76,7 +76,12 @@
                 interval = setInterval(processFrame, 500);
             };
         } catch (err) {
-            alert("Camera Error: " + err.message);
+            console.error(err);
+            let msg = "Camera Error: " + err.message;
+            if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost') {
+                msg += "\n\n⚠️ MOBILE USERS: Browsers block camera access on non-HTTPS connections. Please use 'localhost' or an HTTPS tunnel (like ngrok).";
+            }
+            alert(msg);
         }
     }
 
