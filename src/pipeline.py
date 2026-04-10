@@ -217,6 +217,7 @@ class AttendancePipeline:
         self.detector = FaceDetector()
         self.embedder = FaceEmbedder()
         self.logger = AttendanceLogger(LOGS_DIR)
+        self._cached_embeddings = None
         
         # Sync from cloud on init
         self.sync_from_cloud()
@@ -511,8 +512,9 @@ class AttendancePipeline:
         with open(EMBEDDINGS_FILE, "w") as f:
             json.dump(existing_embeddings, f)
             
-        # Push to cloud
+        # Push to cloud and refresh cache
         self.sync_to_cloud()
+        self._cached_embeddings = None
         
         print(f"\n[SUCCESS] Added {added_count} new student(s)")
         print(f"   Total students: {len(existing_embeddings)}\n")
@@ -546,19 +548,26 @@ class AttendancePipeline:
                 if result:
                     embeddings[roll_no] = result
             
-            # Save embeddings
+            # Save and refresh cache
             os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
             with open(EMBEDDINGS_FILE, "w") as f:
                 json.dump(embeddings, f)
             
+            self._cached_embeddings = None
             print(f"\n[OK] Trained {len(embeddings)} students\n")
     
-    def load_embeddings(self):
-        """Load all student embeddings."""
+    def load_embeddings(self, force_reload=False):
+        """Load all student embeddings with memory caching."""
+        if self._cached_embeddings is not None and not force_reload:
+            return self._cached_embeddings
+            
         if not os.path.exists(EMBEDDINGS_FILE):
+            self._cached_embeddings = {}
             return {}
+            
         with open(EMBEDDINGS_FILE, "r") as f:
-            return json.load(f)
+            self._cached_embeddings = json.load(f)
+            return self._cached_embeddings
     
     def recognize_live(self, threshold=0.6):
         """Run real-time attendance recognition."""
@@ -637,14 +646,30 @@ class AttendancePipeline:
 
 
     def recognize_frame(self, frame, threshold=0.6):
-        """Recognize face in a single frame (for Web UI)."""
+        """Recognize face in a single frame (optimized for Cloud/Mobile)."""
+        # 1. OPTIMIZATION: Use memory-cached embeddings
         embeddings = self.load_embeddings()
         if not embeddings:
             return {"status": "error", "message": "No embeddings found"}
             
-        emb, box = self.detect_and_embed(frame)
+        # 2. OPTIMIZATION: Downscale frame for detection to save CPU/Memory
+        # Processing a smaller image is 2-4x faster with MTCNN
+        h, w = frame.shape[:2]
+        max_dim = 480 # Target max dimension
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            proc_frame = cv2.resize(frame, (0,0), fx=scale, fy=scale)
+        else:
+            proc_frame = frame
+            
+        emb, box = self.detect_and_embed(proc_frame)
+        
         if emb is None:
             return {"status": "no_face"}
+        
+        # Adjust box back to original coordinates if scaled
+        if max(h, w) > max_dim:
+            box = [int(b / scale) for b in box]
             
         # Find best match
         best_sim = 0
