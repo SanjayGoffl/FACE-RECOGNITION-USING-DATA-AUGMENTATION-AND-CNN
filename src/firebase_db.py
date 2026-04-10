@@ -1,6 +1,6 @@
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 
@@ -22,12 +22,12 @@ if not firebase_admin._apps:
             
     # Option B: Use Environment Variable (Railway/Cloud)
     elif os.environ.get("FIREBASE_SERVICE_ACCOUNT"):
-        print("🔧 Using FIREBASE_SERVICE_ACCOUNT env var...")
+        print("[INFO] Using FIREBASE_SERVICE_ACCOUNT env var...")
         service_account_info = json.loads(os.environ.get("FIREBASE_SERVICE_ACCOUNT"))
         cred = credentials.Certificate(service_account_info)
         project_id = service_account_info.get("project_id")
     else:
-        raise ValueError("❌ No serviceAccountKey.json found AND no FIREBASE_SERVICE_ACCOUNT env var set.")
+        raise ValueError("[ERROR] No serviceAccountKey.json found AND no FIREBASE_SERVICE_ACCOUNT env var set.")
 
     # Initialize App
     firebase_admin.initialize_app(cred, {
@@ -45,7 +45,7 @@ def add_student_to_db(reg_no, name):
         'created_at': firestore.SERVER_TIMESTAMP,
         'last_trained': None
     }, merge=True)
-    print(f"✅ Student {name} ({reg_no}) added to Firestore.")
+    print(f"[SUCCESS] Student {name} ({reg_no}) added to Firestore.")
 
 # Simple in-memory cache for debouncing: {reg_no: timestamp}
 _log_cache = {}
@@ -63,7 +63,7 @@ def log_attendance(reg_no, name, confidence, method="web-cam"):
     if reg_no in _log_cache:
         last_log_time = _log_cache[reg_no]
         if (now - last_log_time).total_seconds() < 60:
-            print(f"⏳ Skipped duplicate log for {name} (cooldown active)")
+            print(f"[WAIT] Skipped duplicate log for {name} (cooldown active)")
             return
 
     # Update cache
@@ -80,7 +80,7 @@ def log_attendance(reg_no, name, confidence, method="web-cam"):
     
     # We can use a subcollection or a root collection. Root is easier for querying all logs.
     db.collection('attendance_logs').add(log_data)
-    print(f"✅ Attendance logged for {name} ({reg_no})")
+    print(f"[SUCCESS] Attendance logged for {name} ({reg_no})")
 
 def get_all_students_dict():
     """Get all students as a dictionary {reg_no: name}."""
@@ -103,10 +103,10 @@ def delete_student_from_db(reg_no):
     """Delete student from Firestore."""
     try:
         db.collection('students').document(reg_no).delete()
-        print(f"🗑️ Student {reg_no} deleted from Firestore.")
+        print(f"[INFO] Student {reg_no} deleted from Firestore.")
         return True
     except Exception as e:
-        print(f"⚠️ Failed to delete from Firestore: {e}")
+        print(f"[WARNING] Failed to delete from Firestore: {e}")
         return False
         return False
 

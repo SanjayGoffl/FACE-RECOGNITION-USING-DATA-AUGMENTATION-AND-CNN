@@ -42,7 +42,7 @@ except ImportError:
     try:
         from src import firebase_db
     except ImportError:
-        print("⚠️ Could not import firebase_db. Ensure it is in the same directory or src package.")
+        print("[WARNING] Could not import firebase_db. Ensure it is in the same directory or src package.")
         firebase_db = None
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -59,7 +59,7 @@ class FaceDetector:
 
     def __init__(self):
         if FaceDetector._instance is None:
-            print("🚀 Loading MTCNN (Lazy)...")
+            print("[INFO] Loading MTCNN (Lazy)...")
             self.detector = MTCNN()
             FaceDetector._instance = self
         else:
@@ -75,7 +75,7 @@ class FaceDetector:
         try:
             results = self.detector.detect_faces(rgb)
         except Exception as e:
-            print(f"⚠️ Face detection skipped: {e}")
+            print(f"[WARNING] Face detection skipped: {e}")
             return []
             
         detections = []
@@ -117,7 +117,7 @@ class FaceEmbedder:
     
     def __init__(self):
         if FaceEmbedder._instance is None:
-            print("🚀 Loading FaceNet (Lazy)...")
+            print("[INFO] Loading FaceNet (Lazy)...")
             cache_dir = os.path.join(BASE_DIR, "models")
             os.makedirs(cache_dir, exist_ok=True)
             self.model = FaceNet(cache_folder=cache_dir)
@@ -190,7 +190,7 @@ class AttendanceLogger:
             try:
                 firebase_db.log_attendance(roll_no, name, confidence, method="web-ui")
             except Exception as e:
-                print(f"⚠️ Firebase logging failed: {e}")
+                print(f"[WARNING] Firebase logging failed: {e}")
 
         # Keep local CSV backup
         now = datetime.now().isoformat(timespec='seconds')
@@ -202,7 +202,7 @@ class AttendanceLogger:
                     writer.writerow(['name', 'roll_no', 'timestamp', 'confidence'])
                 writer.writerow([name, roll_no, now, confidence])
         except Exception as e:
-            print(f"⚠️ CSV logging failed: {e}")
+            print(f"[WARNING] CSV logging failed: {e}")
             
         self._marked = True
         return True
@@ -229,14 +229,14 @@ class AttendancePipeline:
             bucket = firebase_db.storage.bucket()
             blob = bucket.blob("embeddings.json")
             if blob.exists():
-                print("☁️ Syncing embeddings from Cloud Storage...")
+                print("[CLOUD] Syncing embeddings from Cloud Storage...")
                 os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
                 blob.download_to_filename(EMBEDDINGS_FILE)
-                print("✅ Embeddings synced.")
+                print("[SUCCESS] Embeddings synced.")
             else:
-                print("☁️ No embeddings found in cloud (Fresh Start).")
+                print("[CLOUD] No embeddings found in cloud (Fresh Start).")
         except Exception as e:
-            print(f"⚠️ Cloud sync failed: {e}")
+            print(f"[WARNING] Cloud sync failed: {e}")
 
     def sync_to_cloud(self):
         """Upload embeddings.json to Firebase Storage."""
@@ -249,9 +249,9 @@ class AttendancePipeline:
             bucket = firebase_db.storage.bucket()
             blob = bucket.blob("embeddings.json")
             blob.upload_from_filename(EMBEDDINGS_FILE)
-            print("☁️ ✅ Embeddings uploaded to Cloud Storage.")
+            print("[SUCCESS] Embeddings uploaded to Cloud Storage.")
         except Exception as e:
-            print(f"⚠️ Cloud upload failed: {e}")
+            print(f"[WARNING] Cloud upload failed: {e}")
     
     def detect_and_embed(self, image):
         """Detect face in image and generate embedding.
@@ -297,10 +297,10 @@ class AttendancePipeline:
         """Get all students from Firebase (fallback to CSV if fail)."""
         if firebase_db:
             try:
-                print("🔄 Fetching students from Firebase...")
+                print("[INFO] Fetching students from Firebase...")
                 return firebase_db.get_all_students_dict()
             except Exception as e:
-                print(f"⚠️ Firebase fetch failed: {e}")
+                print(f"[WARNING] Firebase fetch failed: {e}")
         
         # Fallback to local CSV? Or just empty. 
         # For now, let's assuming we rely on Firebase. 
@@ -318,6 +318,31 @@ class AttendancePipeline:
                 students[roll] = name
         return students
     
+    def _augment_image(self, img):
+        """Perform synthetic data augmentation on a single face image.
+        
+        Returns:
+            list: List of augmented images
+        """
+        augmented = []
+        
+        # 1. Original
+        augmented.append(img)
+        
+        # 2. Horizontal Flip
+        flipped = cv2.flip(img, 1)
+        augmented.append(flipped)
+        
+        # 3. Brightness Adjustment (Brighter)
+        brighter = cv2.convertScaleAbs(img, alpha=1.2, beta=10)
+        augmented.append(brighter)
+        
+        # 4. Brightness Adjustment (Darker)
+        darker = cv2.convertScaleAbs(img, alpha=0.8, beta=-10)
+        augmented.append(darker)
+        
+        return augmented
+
     def _process_student(self, roll_no, name):
         """Process a single student and return their embedding data.
         
@@ -326,7 +351,7 @@ class AttendancePipeline:
         """
         student_dir = os.path.join(STUDENTS_DIR, roll_no)
         if not os.path.isdir(student_dir):
-            print(f"⚠️  Skipping {roll_no} - folder not found")
+            print(f"[WARNING] Skipping {roll_no} - folder not found")
             return None
         
         # Get all photos (case-insensitive extensions)
@@ -340,7 +365,7 @@ class AttendancePipeline:
         )
         
         if len(photos) < 2:
-            print(f"⚠️  Skipping {roll_no} - need at least 2 photos, found {len(photos)}")
+            print(f"[WARNING] Skipping {roll_no} - need at least 2 photos, found {len(photos)}")
             return None
         
         # Generate embeddings from all photos
@@ -349,19 +374,23 @@ class AttendancePipeline:
             img = cv2.imread(photo_path)
             if img is None:
                 continue
-            emb, _ = self.detect_and_embed(img)
-            if emb is not None:
-                embs.append(emb)
+            if img is not None:
+                # DATA AUGMENTATION: Create variations of the face
+                variants = self._augment_image(img)
+                for variant in variants:
+                    emb, _ = self.detect_and_embed(variant)
+                    if emb is not None:
+                        embs.append(emb)
         
         if not embs:
-            print(f"❌ {roll_no} - no valid faces detected")
+            print(f"[ERROR] {roll_no} - no valid faces detected")
             return None
         
         # Compute mean embedding
         mean_emb = np.mean(np.stack(embs, axis=0), axis=0)
         mean_emb = self.normalize_embedding(mean_emb)
         
-        print(f"✓ {roll_no}: {name} ({len(embs)} faces)")
+        print(f"[OK] {roll_no}: {name} ({len(embs)} faces)")
         return {
             "name": name,
             "embedding": mean_emb
@@ -380,12 +409,12 @@ class AttendancePipeline:
                 os.makedirs(os.path.dirname(EMBEDDINGS_FILE), exist_ok=True)
                 with open(EMBEDDINGS_FILE, "w") as f:
                     json.dump(embeddings, f)
-                print(f"🗑️ Removed {roll_no} from embeddings model.")
+                print(f"[INFO] Removed {roll_no} from embeddings model.")
             except Exception as e:
-                print(f"⚠️ Failed to save embeddings during deletion: {e}")
+                print(f"[WARNING] Failed to save embeddings during deletion: {e}")
                 return False
         else:
-            print(f"⚠️ {roll_no} not found in embeddings (safe to ignore if not trained yet).")
+            print(f"[WARNING] {roll_no} not found in embeddings (safe to ignore if not trained yet).")
 
         # 2. Delete Data Folder
         if delete_data:
@@ -393,18 +422,18 @@ class AttendancePipeline:
             if os.path.exists(student_dir):
                 try:
                     shutil.rmtree(student_dir)
-                    print(f"🗑️ Deleted data folder: {student_dir}")
+                    print(f"[INFO] Deleted data folder: {student_dir}")
                 except Exception as e:
-                    print(f"⚠️ Failed to delete data folder: {e}")
+                    print(f"[WARNING] Failed to delete data folder: {e}")
                     return False
             else:
-                print(f"⚠️ specific data folder {student_dir} not found.")
+                print(f"[WARNING] specific data folder {student_dir} not found.")
 
         return True
     
     def cleanup(self):
         """Force release of memory (TensorFlow/Keras)."""
-        print("🧹 Cleaning up memory...")
+        print("[INFO] Cleaning up memory...")
         
         # Reset Singletons
         FaceDetector._instance = None
@@ -420,7 +449,7 @@ class AttendancePipeline:
             
         # Force GC
         gc.collect()
-        print("✅ Memory cleanup complete.")
+        print("[SUCCESS] Memory cleanup complete.")
 
     def add_students_incremental(self, specific_roll_nos=None):
 
@@ -439,7 +468,7 @@ class AttendancePipeline:
         all_students = self._get_all_students_from_csv()
         
         if not all_students:
-            print("❌ No students in CSV")
+            print("[ERROR] No students in CSV")
             return 0
         
         # Determine which students to process
@@ -461,10 +490,10 @@ class AttendancePipeline:
                              if roll not in existing_embeddings}
         
         if not students_to_add:
-            print("✅ No new students to add. All students already trained.")
+            print("[SUCCESS] No new students to add. All students already trained.")
             return 0
         
-        print(f"\n🔄 Adding {len(students_to_add)} new student(s) incrementally...")
+        print(f"\n[INFO] Adding {len(students_to_add)} new student(s) incrementally...")
         print(f"   (Keeping {len(existing_embeddings)} existing student(s))\n")
         
         added_count = 0
@@ -485,7 +514,7 @@ class AttendancePipeline:
         # Push to cloud
         self.sync_to_cloud()
         
-        print(f"\n✅ Added {added_count} new student(s)")
+        print(f"\n[SUCCESS] Added {added_count} new student(s)")
         print(f"   Total students: {len(existing_embeddings)}\n")
         return added_count
     
@@ -501,12 +530,12 @@ class AttendancePipeline:
             self.add_students_incremental()
         else:
             # FULL RETRAIN MODE: Retrain everything from scratch
-            print("\n⚠️  FULL RETRAIN MODE - Processing ALL students from scratch\n")
+            print("\n[WARNING] FULL RETRAIN MODE - Processing ALL students from scratch\n")
             
             all_students = self._get_all_students_from_csv()
             
             if not all_students:
-                print("❌ No students in CSV")
+                print("[ERROR] No students in CSV")
                 return
             
             print(f"Training {len(all_students)} students...")
@@ -522,7 +551,7 @@ class AttendancePipeline:
             with open(EMBEDDINGS_FILE, "w") as f:
                 json.dump(embeddings, f)
             
-            print(f"\n✓ Trained {len(embeddings)} students\n")
+            print(f"\n[OK] Trained {len(embeddings)} students\n")
     
     def load_embeddings(self):
         """Load all student embeddings."""
@@ -535,14 +564,14 @@ class AttendancePipeline:
         """Run real-time attendance recognition."""
         embeddings = self.load_embeddings()
         if not embeddings:
-            print("❌ No embeddings found. Run --train first.")
+            print("[ERROR] No embeddings found. Run --train first.")
             return
         
         print(f"Recognizing {len(embeddings)} students. Press 'q' to quit.\n")
         
         cap = cv2.VideoCapture(0)
         if not cap.isOpened():
-            print("❌ Cannot open webcam")
+            print("[ERROR] Cannot open webcam")
             return
             
         frame_count = 0

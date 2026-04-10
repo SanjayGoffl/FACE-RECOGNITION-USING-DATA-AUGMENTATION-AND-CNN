@@ -24,7 +24,7 @@ def list_available_videos():
     """
     if not os.path.exists(DEFAULT_VIDEO_DIR):
         os.makedirs(DEFAULT_VIDEO_DIR, exist_ok=True)
-        print(f"📁 Created video folder: {DEFAULT_VIDEO_DIR}")
+        print(f"[INFO] Created video folder: {DEFAULT_VIDEO_DIR}")
         return []
     
     videos = glob.glob(os.path.join(DEFAULT_VIDEO_DIR, "*.mp4"))
@@ -41,11 +41,11 @@ def select_video_interactive():
     videos = list_available_videos()
     
     if not videos:
-        print(f"\n❌ No videos found in: {DEFAULT_VIDEO_DIR}")
-        print(f"📌 Please place .mp4 files in the videos folder and try again.")
+        print(f"\n[ERROR] No videos found in: {DEFAULT_VIDEO_DIR}")
+        print(f"[INFO] Please place .mp4 files in the videos folder and try again.")
         return None
     
-    print(f"\n🎬 Available Videos ({len(videos)}):")
+    print(f"\n[INFO] Available Videos ({len(videos)}):")
     print("=" * 60)
     
     for idx, video_path in enumerate(videos, 1):
@@ -60,20 +60,20 @@ def select_video_interactive():
             choice = input(f"\nSelect video (1-{len(videos)}) or 'q' to quit: ").strip()
             
             if choice.lower() == 'q':
-                print("👋 Exiting...")
+                print("[INFO] Exiting...")
                 return None
             
             choice_num = int(choice)
             if 1 <= choice_num <= len(videos):
                 selected_video = videos[choice_num - 1]
-                print(f"✅ Selected: {os.path.basename(selected_video)}\n")
+                print(f"[INFO] Selected: {os.path.basename(selected_video)}\n")
                 return selected_video
             else:
-                print(f"⚠️  Please enter a number between 1 and {len(videos)}")
+                print(f"[WARNING] Please enter a number between 1 and {len(videos)}")
         except ValueError:
-            print("⚠️  Invalid input. Please enter a number or 'q' to quit.")
+            print("[WARNING] Invalid input. Please enter a number or 'q' to quit.")
         except KeyboardInterrupt:
-            print("\n👋 Exiting...")
+            print("\n[INFO] Exiting...")
             return None
 
 
@@ -87,22 +87,22 @@ def recognize_from_video(video_path, threshold=0.6):
     # Load student database
     embeddings = pipeline.load_embeddings()
     if not embeddings:
-        print("❌ No embeddings found. Run 'python main.py --train' first.")
+        print("[ERROR] No embeddings found. Run 'python main.py --train' first.")
         return
     
     if not os.path.exists(video_path):
-        print(f"❌ Video file not found: {video_path}")
+        print(f"[ERROR] Video file not found: {video_path}")
         return
 
-    print(f"\n🎥 Processing video: {os.path.basename(video_path)}")
-    print(f"📊 Recognizing {len(embeddings)} students")
-    print(f"🎯 Threshold: {threshold}")
+    print(f"\n[INFO] Processing video: {os.path.basename(video_path)}")
+    print(f"[INFO] Recognizing {len(embeddings)} students")
+    print(f"[INFO] Threshold: {threshold}")
     print(f"Press 'q' to quit early\n")
     
     cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
-        print("❌ Cannot open video file")
+        print("[ERROR] Cannot open video file")
         return
     
     # Get video properties for display
@@ -110,7 +110,7 @@ def recognize_from_video(video_path, threshold=0.6):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = total_frames / fps if fps > 0 else 0
     
-    print(f"📹 Video Info:")
+    print(f"[INFO] Video Info:")
     print(f"   FPS: {fps:.2f}")
     print(f"   Total Frames: {total_frames}")
     print(f"   Duration: {duration:.2f}s\n")
@@ -123,7 +123,7 @@ def recognize_from_video(video_path, threshold=0.6):
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
-            print("\n✅ Finished processing video")
+            print("\n[INFO] Finished processing video")
             break
         
         frame_count += 1
@@ -147,7 +147,7 @@ def recognize_from_video(video_path, threshold=0.6):
                 label = f"{best_name} ({best_roll}) | {best_sim:.2f}"
                 # Logs to logs/attendance.csv once per session (same as webcam)
                 if pipeline.logger.mark_once(best_name, best_roll):
-                    print(f"✓ Attendance marked: {best_name} ({best_roll}) - Similarity: {best_sim:.2f}")
+                    print(f"[OK] Attendance marked: {best_name} ({best_roll}) - Similarity: {best_sim:.2f}")
             else:
                 label = f"Unknown | {best_sim:.2f}"
             
@@ -162,12 +162,12 @@ def recognize_from_video(video_path, threshold=0.6):
         
         # Press 'q' to quit early
         if cv2.waitKey(1) & 0xFF == ord('q'):
-            print("\n⚠️  Video processing stopped by user")
+            print("\n[INFO] Video processing stopped by user")
             break
     
     cap.release()
     cv2.destroyAllWindows()
-    print("\n🎬 Video processing complete!")
+    print("\n[INFO] Video processing complete!")
 
 
 if __name__ == '__main__':

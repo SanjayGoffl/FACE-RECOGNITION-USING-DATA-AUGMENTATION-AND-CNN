@@ -25,11 +25,11 @@ if __name__ == "__main__":
     local_ip = get_ip_address()
     
     print("="*60)
-    print(f"🚀 PRODUCTION SERVER STARTED")
+    print(f"[INFO] PRODUCTION SERVER STARTED")
     print(f"   Using Waitress WSGI Server")
     print("-" * 60)
-    print(f"📡 Local Access:     http://localhost:{port}")
-    print(f"🌐 Network Access:   http://{local_ip}:{port}")
+    print(f"[INFO] Local Access:     http://localhost:{port}")
+    print(f"[INFO] Network Access:   http://{local_ip}:{port}")
     print("-" * 60)
     print("logs:")
     
